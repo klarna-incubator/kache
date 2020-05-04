@@ -1,0 +1,26 @@
+#!/usr/bin/perl -pi
+
+# Cleanup names of testsuites and testcases in eunit_surefire XML
+# output.
+
+use strict;
+
+# Remove description attribute.
+s/\s+description="([^"]*)"//;
+
+# Locate and extract name attribute.
+/name="([^"]*)"/;
+my $name = $1;
+my ($from, $to) = ($-[1], $+[1]);
+
+# Fix testsuite names.
+$name =~ s,directory &quot;[^/]*/(.*?)/\.bin&quot,$1,;
+$name =~ s,file &quot;(.*?)\.app&quot;,$1,;            # name="file &quot;alps.app&quot;"
+$name =~ s,module '(.*?)',$1,;                         # name="module 'alps_db_mock'"
+
+# Fix testcase names.
+$name =~ s/ *\(fun (.*?) *\/ *[0-9_]+\)/:$1/;
+$name =~ s/[^ :]*:0 //g;
+
+# Replace name attribute value with fixed version.
+substr $_, $from, $to - $from, $name;
