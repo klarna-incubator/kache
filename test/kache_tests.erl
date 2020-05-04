@@ -9,6 +9,7 @@ kache_test_() ->
   , ?T(fun test_independent_caches/0)
   , ?T(fun test_ttl/0)
   , ?T(fun test_purge/0)
+  , ?T(fun test_info/0)
   , ?T(fun test_named/0)
   ].
 
@@ -54,6 +55,19 @@ test_purge()->
   kache:purge(Cache),
   ?assertEqual(notfound, kache:get(Cache, key1)),
   ?assertEqual(notfound, kache:get(Cache, key2)),
+  kache:stop(Cache).
+
+test_info()->
+  {ok, Cache} = kache:start_link([]),
+  Info0 = kache:info(Cache),
+  ?assertEqual(0, proplists:get_value(size, Info0)),
+  kache:put(Cache, key, value),
+  Info1 = kache:info(Cache),
+  ?assertEqual(1, proplists:get_value(size, Info1)),
+  kache:purge(Cache),
+  Info2 = kache:info(Cache),
+  ?assertEqual(0, proplists:get_value(size, Info2)),
+  ?assert(proplists:get_value(memory, Info0) < proplists:get_value(memory, Info1)),
   kache:stop(Cache).
 
 test_named() ->

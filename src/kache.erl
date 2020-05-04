@@ -9,8 +9,13 @@
 
 -type cache() :: pid() | atom().
 
+-type info() ::
+        {size, non_neg_integer()}
+      | {memory, non_neg_integer()}.
+
 -export_type([ ttl/0
              , option/0
+             , info/0
              , cache/0
              ]).
 
@@ -26,6 +31,8 @@
         , remove/3
         , purge/1
         , purge/2
+        , info/1
+        , info/2
         ]).
 
 -export([ init/1
@@ -82,6 +89,14 @@ purge(Cache) ->
 purge(Cache, Timeout) ->
   gen_server:call(Cache, purge, Timeout).
 
+-spec info(cache()) -> [info()].
+info(Cache) ->
+  info(Cache, ?DEFAULT_TIMEOUT).
+
+-spec info(cache(), timeout()) -> [info()].
+info(Cache, Timeout) ->
+  gen_server:call(Cache, info, Timeout).
+
 %% gen_server
 
 -record(state, { table :: ets:tid() }).
@@ -107,6 +122,9 @@ handle_call({remove, Key}, _, State) ->
   {reply, Reply, NewState};
 handle_call(purge, _, State) ->
   {Reply, NewState} = do_purge(State),
+  {reply, Reply, NewState};
+handle_call(info, _, State) ->
+  {Reply, NewState} = do_info(State),
   {reply, Reply, NewState};
 handle_call(_, _, State) ->
   {noreply, State}.
@@ -140,6 +158,12 @@ do_remove(Key, State) ->
 do_purge(State) ->
   ets:delete_all_objects(State#state.table),
   {ok, State}.
+
+do_info(State) ->
+  Info = ets:info(State#state.table),
+  Size = proplists:lookup(size, Info),
+  Memory = proplists:lookup(memory, Info),
+  {[Size, Memory], State}.
 
 -spec to_expire(ttl()) -> integer() | infinity.
 to_expire(infinity) ->
