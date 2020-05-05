@@ -8,6 +8,7 @@ kache_test_() ->
   , ?T(fun test_independent_keys/0)
   , ?T(fun test_independent_caches/0)
   , ?T(fun test_ttl/0)
+  , ?T(fun test_eviction/0)
   , ?T(fun test_purge/0)
   , ?T(fun test_info/0)
   , ?T(fun test_named/0)
@@ -46,6 +47,19 @@ test_ttl()->
   ?assertEqual({ok, value}, kache:get(Cache, key)),
   timer:sleep(10),
   ?assertEqual(notfound, kache:get(Cache, key)),
+  kache:stop(Cache).
+
+test_eviction()->
+  {ok, Cache} = kache:start_link([{eviction, lru}, {capacity, 2}]),
+  kache:put(Cache, key1, value1),
+  kache:put(Cache, key2, value2),
+  ?assertEqual({ok, value1}, kache:get(Cache, key1)),
+  ?assertEqual({ok, value2}, kache:get(Cache, key2)),
+  kache:get(Cache, key1),
+  kache:put(Cache, key3, value3),
+  ?assertEqual({ok, value1}, kache:get(Cache, key1)),
+  ?assertEqual(notfound, kache:get(Cache, key2)),
+  ?assertEqual({ok, value3}, kache:get(Cache, key3)),
   kache:stop(Cache).
 
 test_purge()->
