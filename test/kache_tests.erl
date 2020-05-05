@@ -12,6 +12,8 @@ kache_test_() ->
   , ?T(fun test_purge/0)
   , ?T(fun test_info/0)
   , ?T(fun test_named/0)
+  , ?T(fun test_get_wait/0)
+  , ?T(fun test_get_fill/0)
   ].
 
 test_put_get_remove() ->
@@ -92,4 +94,20 @@ test_named() ->
   ?assertEqual({ok, value}, kache:get(Cache, key)),
   kache:remove(Cache, key),
   ?assertEqual(notfound, kache:get(Cache, key)),
+  kache:stop(Cache).
+
+test_get_wait() ->
+  {ok, Cache} = kache:start_link([]),
+  timer:apply_after(10, kache, put, [Cache, key, value]),
+  ?assertEqual(notfound, kache:get(Cache, key)),
+  ?assertEqual({ok, value}, kache:get_wait(Cache, key)),
+  ?assertEqual({ok, value}, kache:get(Cache, key)),
+  kache:stop(Cache).
+
+test_get_fill() ->
+  {ok, Cache} = kache:start_link([]),
+  spawn(kache, get_fill, [Cache, key, fun() -> timer:sleep(10), value end]),
+  ?assertEqual(notfound, kache:get(Cache, key)),
+  ?assertEqual({ok, value}, kache:get_fill(Cache, key, fun() -> error(fail) end)),
+  ?assertEqual({ok, value}, kache:get(Cache, key)),
   kache:stop(Cache).

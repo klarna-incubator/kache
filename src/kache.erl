@@ -5,6 +5,8 @@
 
 -type ttl() :: {erlang:time_unit(), integer()} | infinity.
 
+-type generator() :: fun(() -> term()) | {module(), atom(), [term()]}.
+
 -type eviction() :: none | fifo | lru | random | module().
 
 -type option() ::
@@ -32,6 +34,11 @@
         , put/5
         , get/2
         , get/3
+        , get_wait/2
+        , get_wait/3
+        , get_fill/3
+        , get_fill/4
+        , get_fill/5
         , remove/2
         , remove/3
         , evict/1
@@ -81,6 +88,28 @@ get(Cache, Key) ->
 get(Cache, Key, Timeout) ->
   gen_server:call(Cache, {get, Key}, Timeout).
 
+-spec get_wait(cache(), term()) -> ok.
+get_wait(Cache, Key) ->
+  get_wait(Cache, Key, ?DEFAULT_TIMEOUT).
+
+-spec get_wait(cache(), term(), timeout()) -> ok.
+get_wait(Cache, Key, Timeout) ->
+  gen_server:call(Cache, {get_wait, Key}, Timeout).
+
+-spec get_fill(cache(), term(), generator()) -> ok.
+get_fill(Cache, Key, Generator) ->
+  get_fill(Cache, Key, Generator, infinity).
+
+-spec get_fill(cache(), term(), generator(), ttl()) -> ok.
+get_fill(Cache, Key, Generator, Ttl) ->
+  get_fill(Cache, Key, Generator, Ttl, ?DEFAULT_TIMEOUT).
+
+-spec get_fill(cache(), term(), generator(), ttl(), timeout()) -> ok.
+get_fill(Cache, Key, {Module, Function, Args}, Ttl, Timeout) ->
+  get_fill(Cache, Key, fun() -> apply(Module, Function, Args) end, Ttl, Timeout);
+get_fill(Cache, Key, Generator, Ttl, Timeout) ->
+  gen_server:call(Cache, {get_fill, Key, Generator, Ttl, Timeout}, Timeout).
+
 -spec remove(cache(), term()) -> ok.
 remove(Cache, Key) ->
   remove(Cache, Key, ?DEFAULT_TIMEOUT).
@@ -123,6 +152,7 @@ info(Cache, Timeout) ->
         { table    :: ets:tid()
         , eviction :: kache_eviction:strategy()
         , capacity :: pos_integer()
+        , waiting  :: ets:tid()
         }).
 
 init(Options) ->
@@ -130,9 +160,11 @@ init(Options) ->
   Table = ets:new(?MODULE, [set | EtsOptions]),
   Eviction = proplists:get_value(eviction, Options, none),
   Capacity = proplists:get_value(capacity, Options, infinity),
+  Waiting = ets:new(?MODULE, [bag]),
   State = #state{ table = Table
                 , eviction = kache_eviction:new(eviction_module(Eviction))
                 , capacity = Capacity
+                , waiting = Waiting
                 },
   {ok, State}.
 
@@ -158,23 +190,21 @@ eviction_module(Eviction) ->
   end.
 
 handle_call({put, Key, Value, Ttl}, _, State) ->
-  {Reply, NewState} = do_put(Key, Value, Ttl, State),
-  {reply, Reply, NewState};
+  do_put(Key, Value, Ttl, State);
 handle_call({get, Key}, _, State) ->
-  {Reply, NewState} = do_get(Key, State),
-  {reply, Reply, NewState};
+  do_get(Key, State);
+handle_call({get_wait, Key}, From, State) ->
+  do_get_wait(Key, From, State);
+handle_call({get_fill, Key, Generator, Ttl, Timeout}, From, State) ->
+  do_get_fill(Key, Generator, Ttl, Timeout, From, State);
 handle_call({remove, Key}, _, State) ->
-  {Reply, NewState} = do_remove(Key, State),
-  {reply, Reply, NewState};
+  do_remove(Key, State);
 handle_call({evict, N}, _, State) ->
-  {Reply, NewState} = do_evict(N, State),
-  {reply, Reply, NewState};
+  do_evict(N, State);
 handle_call(purge, _, State) ->
-  {Reply, NewState} = do_purge(State),
-  {reply, Reply, NewState};
+  do_purge(State);
 handle_call(info, _, State) ->
-  {Reply, NewState} = do_info(State),
-  {reply, Reply, NewState};
+  do_info(State);
 handle_call(_, _, State) ->
   {noreply, State}.
 
@@ -191,16 +221,104 @@ do_put(Key, Value, Ttl, State0) ->
   end,
   Expire = to_expire(Ttl),
   State2 = cache_insert(Key, Value, Expire, State1),
+  State3 = cache_notify(Key, {ok, Value}, State2),
   Size = ets:info(Table, size),
   case Capacity =/= infinity andalso Size > Capacity of
     true ->
       N = Size - Capacity,
-      do_evict(N, State2);
+      do_evict(N, State3);
     false ->
-      {reply, ok, State2}
+      {reply, ok, State3}
   end.
 
 do_get(Key, State0) ->
+  {Response, State} = cache_get(Key, State0),
+  {reply, Response, State}.
+
+do_get_wait(Key, From, State0) ->
+  {Response, State1} = cache_get(Key, State0),
+  case Response of
+    {ok, Result} ->
+      {reply, Result, State1};
+    notfound ->
+      State = cache_wait(Key, From, State1),
+      {noreply, State}
+  end.
+
+do_get_fill(Key, Generator, Ttl, Timeout, From, State0) ->
+  {Response, State1} = cache_get(Key, State0),
+  case Response of
+    {ok, Result} ->
+      {reply, Result, State1};
+    _ ->
+      GeneratorRunning = ets:member(State1#state.waiting, Key),
+      State2 = cache_wait(Key, From, State1),
+      case GeneratorRunning of
+        true ->
+          {noreply, State2};
+        false ->
+          Cache = self(),
+          spawn(fun() -> generate_and_insert(Cache, Key, Generator, Ttl, Timeout) end),
+          {noreply, State2}
+      end
+  end.
+
+do_remove(Key, State0) ->
+  case ets:lookup(State0#state.table, Key) of
+    [{Key, _, _, EvKey}] ->
+      State1 = cache_remove(Key, EvKey, State0);
+    _ ->
+      State1 = State0
+  end,
+  State = cache_notify(Key, notfound, State1),
+  {reply, ok, State}.
+
+do_evict(N, State0) ->
+  Results = kache_eviction:evict(State0#state.eviction, N),
+  State = lists:foldl(fun({EvKey, Key}, S) -> cache_remove(Key, EvKey, S) end,
+                      State0,
+                      Results),
+  {reply, ok, State}.
+
+do_purge(State0) ->
+  State = cache_purge(State0),
+  {reply, ok, State}.
+
+do_info(State) ->
+  Info = ets:info(State#state.table),
+  Size = proplists:lookup(size, Info),
+  Memory = proplists:lookup(memory, Info),
+  {reply, [Size, Memory], State}.
+
+generate_and_insert(Cache, Key, Generator, Ttl, Timeout) ->
+  {Pid, Monitor} = spawn_monitor(exit_with(Generator)),
+  {ok, Timer} = timer:exit_after(Timeout, Pid, timeout),
+  receive
+    {'DOWN', Monitor, process, Pid, Result} -> ok
+  end,
+  {ok, cancel} = timer:cancel(Timer),
+  case Result of
+    {ok, Value} ->
+      put(Cache, Key, Value, Ttl);
+    _ ->
+      remove(Cache, Key)
+  end.
+
+-spec exit_with(fun(() -> term())) -> fun(() -> no_return()).
+exit_with(Generator) ->
+  fun () ->
+      Response =
+        try Generator() of
+          Result ->
+            {ok, Result}
+        catch
+          Type:Reason ->
+            {Type, Reason}
+        end,
+      exit(Response)
+  end.
+
+cache_get(Key, State0) ->
   case ets:lookup(State0#state.table, Key) of
     [{Key, Value, Expire, EvKey}] ->
       case is_expired(Expire) of
@@ -216,32 +334,6 @@ do_get(Key, State0) ->
       Response = notfound
   end,
   {Response, State}.
-
-do_remove(Key, State0) ->
-  case ets:lookup(State0#state.table, Key) of
-    [{Key, _, _, EvKey}] ->
-      State = cache_remove(Key, EvKey, State0);
-    _ ->
-      State = State0
-  end,
-  {ok, State}.
-
-do_evict(N, State0) ->
-  Results = kache_eviction:evict(State0#state.eviction, N),
-  State = lists:foldl(fun({EvKey, Key}, S) -> cache_remove(Key, EvKey, S) end,
-                      State0,
-                      Results),
-  {ok, State}.
-
-do_purge(State0) ->
-  State = cache_purge(State0),
-  {ok, State}.
-
-do_info(State) ->
-  Info = ets:info(State#state.table),
-  Size = proplists:lookup(size, Info),
-  Memory = proplists:lookup(memory, Info),
-  {[Size, Memory], State}.
 
 cache_insert(Key, Value, Expire, State) ->
   #state{ table = Table, eviction = Eviction0 } = State,
@@ -266,6 +358,17 @@ cache_purge(State) ->
   Eviction = kache_eviction:purge(Eviction0),
   true = ets:delete_all_objects(Table),
   State#state{ eviction = Eviction }.
+
+cache_wait(Key, From, State) ->
+  ets:insert(State#state.waiting, {Key, From}),
+  State.
+
+cache_notify(Key, Response, State) ->
+  #state{ waiting = Waiting } = State,
+  Queue = ets:lookup(Waiting, Key),
+  lists:foreach(fun({_, From}) -> gen_server:reply(From, Response) end, Queue),
+  ets:delete(Waiting, Key),
+  State.
 
 -spec to_expire(ttl()) -> integer() | infinity.
 to_expire(infinity) ->
