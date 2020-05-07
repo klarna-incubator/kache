@@ -1,0 +1,21 @@
+@title Kache - Smoooth Caching
+
+@doc A generic, in-memory caching application based on ETS.
+
+```
+Cache = kache:start_link([compressed]),
+kache:put(Cache, item1, value1),
+{ok, value1} = kache:get(Cache, item1),
+kache:remove(Cache, item1),
+notfound = kache:get(Cache, item1),
+kache:stop(Cache).
+'''
+
+== Features ==
+
+<ul>
+ <li>Simple key/value interface</li>
+ <li>Automatic, per-item time-to-live</li>
+ <li>Optional capacity limit with multiple eviction strategies</li>
+ <li>Synchronized cache get-or-fill API to avoid stampeding</li>
+</ul>

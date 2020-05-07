@@ -1,0 +1,46 @@
+html {
+    font-family: Klarna Sans, sans-serif;
+}
+
+body {
+    margin: 1em;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+td {
+	padding: 0.2em;
+}
+
+ul.index {
+    padding: 0.2em;
+	list-style-type: none;
+	background-color: #eeeeee;
+}
+
+h3.function,h3.typedecl {
+	background-color: #eeeeee;
+ 	padding: 0.2em;
+}
+
+div.spec {
+ 	margin-left: 2em;
+	background-color: #eeeeee;
+}
+
+div.spec p {
+    padding: 0.2em;
+}
+
+a.module {
+	text-decoration:none
+}
+a.module:hover {
+	background-color: #eeeeee;
+}
+
+ul.definitions {
+	list-style-type: none;
+}
