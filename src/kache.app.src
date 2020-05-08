@@ -1,0 +1,7 @@
+{application, kache,
+ [ {description,  "A generic, ETS-based caching application"}
+ , {vsn,          git}
+ , {modules,      []}
+ , {registered,   []}
+ , {applications, [kernel, stdlib]}
+ ]}.
