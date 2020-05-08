@@ -50,6 +50,8 @@
         , get_fill/5
         , remove/2
         , remove/3
+        , sweep/1
+        , sweep/2
         , evict/1
         , evict/2
         , evict/3
@@ -167,6 +169,16 @@ remove(Cache, Key) ->
 remove(Cache, Key, Timeout) ->
   gen_server:call(Cache, {remove, Key}, Timeout).
 
+%% @equiv sweep(Cache, DEFAULT_TIMEOUT)
+-spec sweep(cache()) -> non_neg_integer().
+sweep(Cache) ->
+  sweep(Cache, ?DEFAULT_TIMEOUT).
+
+%% @doc Remove all expired entries from the cache.
+-spec sweep(cache(), timeout()) -> non_neg_integer().
+sweep(Cache, Timeout) ->
+  gen_server:call(Cache, sweep, Timeout).
+
 %% @equiv evict(Cache, 0, DEFAULT_TIMEOUT)
 -spec evict(cache()) -> ok.
 evict(Cache) ->
@@ -258,6 +270,8 @@ handle_call({get_fill, Key, Generator, Ttl, Timeout}, From, State) ->
   do_get_fill(Key, Generator, Ttl, Timeout, From, State);
 handle_call({remove, Key}, _, State) ->
   do_remove(Key, State);
+handle_call(sweep, _, State) ->
+  do_sweep(State);
 handle_call({evict, N}, _, State) ->
   do_evict(N, State);
 handle_call(purge, _, State) ->
@@ -332,6 +346,21 @@ do_remove(Key, State0) ->
   end,
   State = cache_notify(Key, notfound, State1),
   {reply, ok, State}.
+
+do_sweep(State0) ->
+  Now = erlang:monotonic_time(),
+  Results =
+    ets:select(State0#state.table,
+               [{ {'_', '_', '$1', '$2'}
+                , [{'andalso',
+                    {'=/=', '$1', infinity},
+                    {'<', '$1', {const, Now}}}]
+                , [{{'$1', '$2'}}]
+                }]),
+  State = lists:foldl(fun({Key, EvKey}, S) -> cache_remove(Key, EvKey, S) end,
+                      State0,
+                      Results),
+  {reply, length(Results), State}.
 
 do_evict(N, State0) ->
   Results = kache_eviction:evict(State0#state.eviction, N),

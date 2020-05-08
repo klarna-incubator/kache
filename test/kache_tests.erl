@@ -49,6 +49,11 @@ test_ttl()->
   ?assertEqual({ok, value}, kache:get(Cache, key)),
   timer:sleep(10),
   ?assertEqual(notfound, kache:get(Cache, key)),
+  kache:put(Cache, key1, value, {millisecond, 10}),
+  kache:put(Cache, key2, value, {millisecond, 100}),
+  kache:put(Cache, key3, value, infinity),
+  timer:sleep(10),
+  ?assertEqual(1, kache:sweep(Cache)),
   kache:stop(Cache).
 
 test_eviction()->
