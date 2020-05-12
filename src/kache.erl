@@ -7,9 +7,18 @@
 -type ttl() :: {erlang:time_unit(), integer()} | infinity.
 %% Time-to-live for individual cache entries.
 
--type generator() :: fun(() -> term()) | {module(), atom(), [term()]}.
+-type generator_return() :: {ok, term()} | {ok, term(), ttl()} | notfound.
+%% Return spec for generator functions.
+
+-type generator0() :: fun(() -> generator_return()) | {module(), atom(), [term()]}.
 %% A generator function for a value to be cached.  Runs in its own
 %% process and must complete within the timeout given to `get_fill'.
+
+-type generator1() :: fun((term()) -> generator_return()).
+%% A generator function for a value to be cached.  Runs in its own
+%% process and must complete within the timeout given to `get_fill'.
+
+-type generator() :: generator0() | generator1().
 
 -type eviction() :: none | fifo | lru | random | module().
 %% Cache eviction strategy.  Either a built-in strategy or a module
@@ -47,7 +56,6 @@
         , get_wait/3
         , get_fill/3
         , get_fill/4
-        , get_fill/5
         , remove/2
         , remove/3
         , sweep/1
@@ -134,15 +142,10 @@ get_wait(Cache, Key) ->
 get_wait(Cache, Key, Timeout) ->
   gen_server:call(Cache, {get_wait, Key}, Timeout).
 
-%% @equiv get_fill(Cache, Key, Generator, infinity, DEFAULT_TIMEOUT)
+%% @equiv get_fill(Cache, Key, Generator, DEFAULT_TIMEOUT)
 -spec get_fill(cache(), term(), generator()) -> {ok, term()} | notfound.
 get_fill(Cache, Key, Generator) ->
-  get_fill(Cache, Key, Generator, infinity).
-
-%% @equiv get_fill(Cache, Key, Generator, Ttl, DEFAULT_TIMEOUT)
--spec get_fill(cache(), term(), generator(), ttl()) -> {ok, term()} | notfound.
-get_fill(Cache, Key, Generator, Ttl) ->
-  get_fill(Cache, Key, Generator, Ttl, ?DEFAULT_TIMEOUT).
+  get_fill(Cache, Key, Generator, ?DEFAULT_TIMEOUT).
 
 %% @doc Retrieve an item from the cache, or generate it if does not
 %% exist.
@@ -150,11 +153,9 @@ get_fill(Cache, Key, Generator, Ttl) ->
 %% Only the first call of `get_fill' on a given `Key' calls
 %% `Generator'.  Any subsequent calls behave just like
 %% `get_wait(Cache, Key, Timeout)'.
--spec get_fill(cache(), term(), generator(), ttl(), timeout()) -> {ok, term()} | notfound.
-get_fill(Cache, Key, {Module, Function, Args}, Ttl, Timeout) ->
-  get_fill(Cache, Key, fun() -> apply(Module, Function, Args) end, Ttl, Timeout);
-get_fill(Cache, Key, Generator, Ttl, Timeout) ->
-  gen_server:call(Cache, {get_fill, Key, Generator, Ttl, Timeout}, Timeout).
+-spec get_fill(cache(), term(), generator(), timeout()) -> {ok, term()} | notfound.
+get_fill(Cache, Key, Generator, Timeout) ->
+  gen_server:call(Cache, {get_fill, Key, Generator, Timeout}, Timeout).
 
 %% @equiv remove(Cache, Key, DEFAULT_TIMEOUT)
 -spec remove(cache(), term()) -> ok.
@@ -266,8 +267,8 @@ handle_call({get, Key}, _, State) ->
   do_get(Key, State);
 handle_call({get_wait, Key}, From, State) ->
   do_get_wait(Key, From, State);
-handle_call({get_fill, Key, Generator, Ttl, Timeout}, From, State) ->
-  do_get_fill(Key, Generator, Ttl, Timeout, From, State);
+handle_call({get_fill, Key, Generator, Timeout}, From, State) ->
+  do_get_fill(Key, Generator, Timeout, From, State);
 handle_call({remove, Key}, _, State) ->
   do_remove(Key, State);
 handle_call(sweep, _, State) ->
@@ -319,7 +320,7 @@ do_get_wait(Key, From, State0) ->
       {noreply, State}
   end.
 
-do_get_fill(Key, Generator, Ttl, Timeout, From, State0) ->
+do_get_fill(Key, Generator, Timeout, From, State0) ->
   {Response, State1} = cache_get(Key, State0),
   case Response of
     {ok, _} ->
@@ -332,7 +333,7 @@ do_get_fill(Key, Generator, Ttl, Timeout, From, State0) ->
           {noreply, State2};
         false ->
           Cache = self(),
-          spawn(fun() -> generate_and_insert(Cache, Key, Generator, Ttl, Timeout) end),
+          spawn(fun() -> generate_and_insert(Cache, Key, Generator, Timeout) end),
           {noreply, State2}
       end
   end.
@@ -379,8 +380,8 @@ do_info(State) ->
   Memory = proplists:lookup(memory, Info),
   {reply, [Size, Memory], State}.
 
-generate_and_insert(Cache, Key, Generator, Ttl, Timeout) ->
-  {Pid, Monitor} = spawn_monitor(exit_with(Generator)),
+generate_and_insert(Cache, Key, Generator, Timeout) ->
+  {Pid, Monitor} = spawn_monitor(exit_with(make_generator(Generator, Key))),
   {ok, Timer} = timer:exit_after(Timeout, Pid, timeout),
   receive
     {'DOWN', Monitor, process, Pid, Result} -> ok
@@ -388,9 +389,22 @@ generate_and_insert(Cache, Key, Generator, Ttl, Timeout) ->
   {ok, cancel} = timer:cancel(Timer),
   case Result of
     {ok, Value} ->
+      put(Cache, Key, Value);
+    {ok, Value, Ttl} ->
       put(Cache, Key, Value, Ttl);
     _ ->
       remove(Cache, Key)
+  end.
+
+-spec make_generator(generator(), term()) -> generator0().
+make_generator(Generator, Key) ->
+  case Generator of
+    {Module, Function, Args} ->
+      fun() -> apply(Module, Function, Args) end;
+    Fun when is_function(Fun, 0) ->
+      Fun;
+    Fun when is_function(Fun, 1) ->
+      fun() -> Fun(Key) end
   end.
 
 -spec exit_with(fun(() -> term())) -> fun(() -> no_return()).
@@ -399,10 +413,10 @@ exit_with(Generator) ->
       Response =
         try Generator() of
           Result ->
-            {ok, Result}
+            Result
         catch
-          Type:Reason ->
-            {Type, Reason}
+          Class:Reason:Stacktrace ->
+            {Class, Reason, Stacktrace}
         end,
       exit(Response)
   end.
@@ -470,4 +484,3 @@ is_expired(infinity) ->
   false;
 is_expired(Expire) ->
   erlang:monotonic_time() > Expire.
-

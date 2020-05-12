@@ -112,9 +112,22 @@ test_get_wait() ->
 
 test_get_fill() ->
   {ok, Cache} = kache:start_link([]),
-  spawn(kache, get_fill, [Cache, key, fun() -> timer:sleep(10), value end]),
-  ?assertEqual(notfound, kache:get(Cache, key)),
-  ?assertEqual({ok, value}, kache:get_fill(Cache, key, fun() -> error(fail) end)),
-  ?assertEqual({ok, value}, kache:get_fill(Cache, key, fun() -> error(fail) end)),
-  ?assertEqual({ok, value}, kache:get(Cache, key)),
+  ?assertEqual(notfound, kache:get_fill(Cache, key, fun() -> notfound end)),
+  spawn(kache, get_fill, [ Cache
+                         , key1
+                         , fun() -> timer:sleep(10), {ok, value1} end
+                         ]),
+  spawn(kache, get_fill, [ Cache
+                         , key2
+                         , fun() -> timer:sleep(10), {ok, value2, {millisecond, 10}} end
+                         ]),
+  ?assertEqual(notfound, kache:get(Cache, key1)),
+  ?assertEqual(notfound, kache:get(Cache, key2)),
+  %% First call will wait and be notified
+  ?assertEqual({ok, value1}, kache:get_fill(Cache, key1, fun() -> error(fail) end)),
+  %% Second call will find value in cache
+  ?assertEqual({ok, value1}, kache:get_fill(Cache, key1, fun() -> error(fail) end)),
+  ?assertEqual({ok, value2}, kache:get(Cache, key2)),
+  timer:sleep(10),
+  ?assertEqual(notfound, kache:get(Cache, key2)),
   kache:stop(Cache).
