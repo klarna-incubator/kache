@@ -122,23 +122,23 @@ get(Cache, Key, Timeout) ->
   gen_server:call(Cache, {get, Key}, Timeout).
 
 %% @equiv get_wait(Cache, Key, DEFAULT_TIMEOUT)
--spec get_wait(cache(), term()) -> ok.
+-spec get_wait(cache(), term()) -> {ok, term()} | notfound.
 get_wait(Cache, Key) ->
   get_wait(Cache, Key, ?DEFAULT_TIMEOUT).
 
 %% @doc Retrieve an item from the cache, waiting if the item to be
 %% `put' or `remove'd if it does not exist.
--spec get_wait(cache(), term(), timeout()) -> ok.
+-spec get_wait(cache(), term(), timeout()) -> {ok, term()} | notfound.
 get_wait(Cache, Key, Timeout) ->
   gen_server:call(Cache, {get_wait, Key}, Timeout).
 
 %% @equiv get_fill(Cache, Key, Generator, infinity, DEFAULT_TIMEOUT)
--spec get_fill(cache(), term(), generator()) -> ok.
+-spec get_fill(cache(), term(), generator()) -> {ok, term()} | notfound.
 get_fill(Cache, Key, Generator) ->
   get_fill(Cache, Key, Generator, infinity).
 
 %% @equiv get_fill(Cache, Key, Generator, Ttl, DEFAULT_TIMEOUT)
--spec get_fill(cache(), term(), generator(), ttl()) -> ok.
+-spec get_fill(cache(), term(), generator(), ttl()) -> {ok, term()} | notfound.
 get_fill(Cache, Key, Generator, Ttl) ->
   get_fill(Cache, Key, Generator, Ttl, ?DEFAULT_TIMEOUT).
 
@@ -148,7 +148,7 @@ get_fill(Cache, Key, Generator, Ttl) ->
 %% Only the first call of `get_fill' on a given `Key' calls
 %% `Generator'.  Any subsequent calls behave just like
 %% `get_wait(Cache, Key, Timeout)'.
--spec get_fill(cache(), term(), generator(), ttl(), timeout()) -> ok.
+-spec get_fill(cache(), term(), generator(), ttl(), timeout()) -> {ok, term()} | notfound.
 get_fill(Cache, Key, {Module, Function, Args}, Ttl, Timeout) ->
   get_fill(Cache, Key, fun() -> apply(Module, Function, Args) end, Ttl, Timeout);
 get_fill(Cache, Key, Generator, Ttl, Timeout) ->
@@ -298,8 +298,8 @@ do_get(Key, State0) ->
 do_get_wait(Key, From, State0) ->
   {Response, State1} = cache_get(Key, State0),
   case Response of
-    {ok, Result} ->
-      {reply, Result, State1};
+    {ok, _} ->
+      {reply, Response, State1};
     notfound ->
       State = cache_wait(Key, From, State1),
       {noreply, State}
@@ -308,8 +308,8 @@ do_get_wait(Key, From, State0) ->
 do_get_fill(Key, Generator, Ttl, Timeout, From, State0) ->
   {Response, State1} = cache_get(Key, State0),
   case Response of
-    {ok, Result} ->
-      {reply, Result, State1};
+    {ok, _} ->
+      {reply, Response, State1};
     _ ->
       GeneratorRunning = ets:member(State1#state.waiting, Key),
       State2 = cache_wait(Key, From, State1),

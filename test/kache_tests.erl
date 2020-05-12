@@ -101,6 +101,7 @@ test_get_wait() ->
   timer:apply_after(10, kache, put, [Cache, key, value]),
   ?assertEqual(notfound, kache:get(Cache, key)),
   ?assertEqual({ok, value}, kache:get_wait(Cache, key)),
+  ?assertEqual({ok, value}, kache:get_wait(Cache, key)),
   ?assertEqual({ok, value}, kache:get(Cache, key)),
   kache:stop(Cache).
 
@@ -108,6 +109,7 @@ test_get_fill() ->
   {ok, Cache} = kache:start_link([]),
   spawn(kache, get_fill, [Cache, key, fun() -> timer:sleep(10), value end]),
   ?assertEqual(notfound, kache:get(Cache, key)),
+  ?assertEqual({ok, value}, kache:get_fill(Cache, key, fun() -> error(fail) end)),
   ?assertEqual({ok, value}, kache:get_fill(Cache, key, fun() -> error(fail) end)),
   ?assertEqual({ok, value}, kache:get(Cache, key)),
   kache:stop(Cache).
