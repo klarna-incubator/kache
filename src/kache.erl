@@ -333,7 +333,9 @@ do_get_fill(Key, Generator, Timeout, From, State0) ->
           {noreply, State2};
         false ->
           Cache = self(),
-          spawn(fun() -> generate_and_insert(Cache, Key, Generator, Timeout) end),
+          proc_lib:spawn(fun() ->
+                             generate_and_insert(Cache, Key, Generator, Timeout)
+                         end),
           {noreply, State2}
       end
   end.
@@ -392,8 +394,16 @@ generate_and_insert(Cache, Key, Generator, Timeout) ->
       put(Cache, Key, Value);
     {ok, Value, Ttl} ->
       put(Cache, Key, Value, Ttl);
+    notfound ->
+      remove(Cache, Key);
     _ ->
-      remove(Cache, Key)
+      remove(Cache, Key),
+      case Result of
+        timeout ->
+          throw(timeout);
+        {Class, Reason, Stacktrace} ->
+          erlang:raise(Class, Reason, Stacktrace)
+      end
   end.
 
 -spec make_generator(generator(), term()) -> generator0().
