@@ -49,6 +49,11 @@ test_ttl()->
   ?assertEqual({ok, value}, kache:get(Cache, key)),
   timer:sleep(10),
   ?assertEqual(notfound, kache:get(Cache, key)),
+  kache:put(Cache, key1, value, {millisecond, 10}),
+  kache:put(Cache, key2, value, {millisecond, 100}),
+  kache:put(Cache, key3, value, infinity),
+  timer:sleep(10),
+  ?assertEqual(1, kache:sweep(Cache)),
   kache:stop(Cache).
 
 test_eviction()->
@@ -101,13 +106,28 @@ test_get_wait() ->
   timer:apply_after(10, kache, put, [Cache, key, value]),
   ?assertEqual(notfound, kache:get(Cache, key)),
   ?assertEqual({ok, value}, kache:get_wait(Cache, key)),
+  ?assertEqual({ok, value}, kache:get_wait(Cache, key)),
   ?assertEqual({ok, value}, kache:get(Cache, key)),
   kache:stop(Cache).
 
 test_get_fill() ->
   {ok, Cache} = kache:start_link([]),
-  spawn(kache, get_fill, [Cache, key, fun() -> timer:sleep(10), value end]),
-  ?assertEqual(notfound, kache:get(Cache, key)),
-  ?assertEqual({ok, value}, kache:get_fill(Cache, key, fun() -> error(fail) end)),
-  ?assertEqual({ok, value}, kache:get(Cache, key)),
+  ?assertEqual(notfound, kache:get_fill(Cache, key, fun() -> notfound end)),
+  spawn(kache, get_fill, [ Cache
+                         , key1
+                         , fun() -> timer:sleep(10), {ok, value1} end
+                         ]),
+  spawn(kache, get_fill, [ Cache
+                         , key2
+                         , fun() -> timer:sleep(10), {ok, value2, {millisecond, 10}} end
+                         ]),
+  ?assertEqual(notfound, kache:get(Cache, key1)),
+  ?assertEqual(notfound, kache:get(Cache, key2)),
+  %% First call will wait and be notified
+  ?assertEqual({ok, value1}, kache:get_fill(Cache, key1, fun() -> error(fail) end)),
+  %% Second call will find value in cache
+  ?assertEqual({ok, value1}, kache:get_fill(Cache, key1, fun() -> error(fail) end)),
+  ?assertEqual({ok, value2}, kache:get(Cache, key2)),
+  timer:sleep(10),
+  ?assertEqual(notfound, kache:get(Cache, key2)),
   kache:stop(Cache).

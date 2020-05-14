@@ -46,6 +46,17 @@ kache:remove(Cache, Key),
 kache:purge(Cache).
 ```
 
+### Entry Expiration
+
+Each entry in the cache has an associated time-to-live.  There are two
+mechanisms to remove expired entries from the cache.
+
+1) The time-to-live is evaluated on each `get` and stale entries
+automatically removed before the function returns `notfound`.
+
+2) The `sweep` function performs a full cache scan and removes all
+stale items.
+
 ### Synchronized Interface
 
 For a cache with heavy read-to-write ratio, the simple key/value
