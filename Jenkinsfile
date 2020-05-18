@@ -18,6 +18,8 @@ node('erlang-otp-r22') {
 
       currentBuild.displayName = "#${currentBuild.number} (${VERSION})"
 
+      env.REBAR_PROFILE="jenkins"
+
       bitbucket.notifiedStage('Fetch Dependencies') {
         sshagent(['jenkins-ssh']) {
           sh 'make get-deps'
@@ -29,11 +31,11 @@ node('erlang-otp-r22') {
           sh 'make eunit'
           sh 'make cover'
           sh 'make covertool'
-          sh 'utils/clean-eunit-xml _build/test/*.xml'
+          sh 'utils/clean-eunit-xml _build/jenkins+test/*.xml'
         } finally {
-          junit(testResults: '_build/test/TEST-*.xml')
-          archiveArtifacts '_build/test/cover/'
-          cobertura(coberturaReportFile: '_build/test/covertool/*.xml')
+          junit(testResults: '_build/jenkins+test/TEST-*.xml')
+          archiveArtifacts '_build/jenkins+test/cover/'
+          cobertura(coberturaReportFile: '_build/jenkins+test/covertool/*.xml')
         }
       }
 
