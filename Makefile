@@ -32,6 +32,9 @@ dialyzer:
 lint:
 	$(ELVIS) rock -V
 
+.PHONY: ci
+ci: lint xref dialyzer eunit
+
 .PHONY: clean
 clean:
 	$(REBAR) clean
