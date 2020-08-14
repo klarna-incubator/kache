@@ -1,0 +1,32 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    name: OTP ${{matrix.otp}}
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        otp: ['23.0', '22.3', '21.3']
+
+    steps:
+      - uses: actions/checkout@v2.0.0
+      - uses: gleam-lang/setup-erlang@v1.1.0
+        with:
+          otp-version: ${{matrix.otp}}
+
+      - name: Xref
+        run: rebar3 xref
+
+      - name: Dialyzer
+        run: rebar3 dialyzer
+
+      - name: Eunit
+        run: rebar3 eunit
